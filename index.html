@@ -3,7 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Quét mã QR - Rập Mica</title>
+<title>Hệ thống Rập Mica</title>
+<meta name="theme-color" content="#0b0b0b">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="Rập Mica">
+<link rel="icon" href="https://drive.google.com/uc?export=download&id=1wWiI5kLwPSajfxctSZ3ERxSndnISU2qI&format=png">
+<link rel="apple-touch-icon" href="https://drive.google.com/thumbnail?id=1wWiI5kLwPSajfxctSZ3ERxSndnISU2qI&sz=w300">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js"></script>
@@ -15,11 +21,19 @@
     display:flex; flex-direction:column;
   }
   header {
-    padding:calc(env(safe-area-inset-top,0px) + 14px) 16px 14px;
+    padding:calc(env(safe-area-inset-top,0px) + 12px) 16px 12px;
     text-align:center; background:#0b0b0b; border-bottom:1px solid #1e1e1e;
   }
-  header h1 { font-size:16px; font-weight:700; }
+  header img { height:26px; margin-bottom:7px; opacity:.95; }
+  header h1 { font-size:15px; font-weight:700; }
   header p { font-size:12px; color:#8a8a8a; margin-top:3px; }
+  .step {
+    display:inline-flex; align-items:center; gap:7px;
+    background:rgba(255,255,255,.12); border-radius:999px;
+    padding:4px 12px; margin-bottom:7px;
+    font-size:10.5px; font-weight:700; letter-spacing:.5px; text-transform:uppercase;
+  }
+  .step i { width:7px; height:7px; border-radius:50%; background:#135bec; display:inline-block; }
   #stage { flex:1; position:relative; overflow:hidden; background:#000; }
   #video { width:100%; height:100%; object-fit:cover; }
   #frame {
@@ -53,9 +67,11 @@
     padding:28px; text-align:center; gap:12px;
   }
   #overlay.show { display:flex; }
+  /* Column flex children shrink-to-fit and can overflow — clamp them */
+  #overlay > * { max-width:100%; }
   #overlay .big { font-size:46px; line-height:1; }
-  #overlay h2 { font-size:19px; font-weight:700; }
-  #overlay p { font-size:14px; color:#b4b4b4; line-height:1.55; }
+  #overlay h2 { font-size:19px; font-weight:700; max-width:280px; }
+  #overlay p { font-size:14px; color:#b4b4b4; line-height:1.55; max-width:280px; }
   #code {
     font-size:22px; font-weight:700; letter-spacing:1px; color:#16c46a;
     background:#111; border:1px solid #2a2a2a; border-radius:12px;
@@ -66,6 +82,8 @@
 <body>
 
 <header>
+  <img src="https://drive.google.com/thumbnail?id=11skpkUV-UDfwkHQkEIcIsCTy1rJVGdbz&sz=w600" alt="Scavi">
+  <div class="step"><i></i>Bước 1: Quét mã QR</div>
   <h1>Quét mã QR nhân viên rập</h1>
   <p id="ctx">Đưa mã QR vào giữa khung</p>
 </header>
