@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Quét mã QR - Rập Mica</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.21.3/umd/index.min.js"></script>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    font-family:'Inter',system-ui,sans-serif; background:#000; color:#fff;
+    height:100vh; height:100dvh; overflow:hidden;
+    display:flex; flex-direction:column;
+  }
+  header {
+    padding:calc(env(safe-area-inset-top,0px) + 14px) 16px 14px;
+    text-align:center; background:#0b0b0b; border-bottom:1px solid #1e1e1e;
+  }
+  header h1 { font-size:16px; font-weight:700; }
+  header p { font-size:12px; color:#8a8a8a; margin-top:3px; }
+  #stage { flex:1; position:relative; overflow:hidden; background:#000; }
+  #video { width:100%; height:100%; object-fit:cover; }
+  #frame {
+    position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+    width:min(72vw,300px); aspect-ratio:1/1; border-radius:22px;
+    border:3px solid rgba(255,255,255,.9);
+    box-shadow:0 0 0 100vmax rgba(0,0,0,.45);
+  }
+  #frame.hit { border-color:#16c46a; }
+  #hint {
+    position:absolute; left:0; right:0; bottom:18px; text-align:center;
+    font-size:13px; font-weight:500; color:#dcdcdc; padding:0 24px;
+    text-shadow:0 1px 4px rgba(0,0,0,.9);
+  }
+  footer {
+    padding:14px 16px calc(env(safe-area-inset-bottom,0px) + 16px);
+    background:#0b0b0b; border-top:1px solid #1e1e1e;
+    display:flex; gap:10px;
+  }
+  button {
+    flex:1; font-family:inherit; font-size:15px; font-weight:700;
+    padding:15px 12px; border-radius:15px; border:0; cursor:pointer;
+    display:flex; align-items:center; justify-content:center; gap:7px;
+  }
+  .btn-ghost { background:#1f1f1f; color:#fff; }
+  .btn-on { background:#f5b400; color:#1a1a1a; }
+  .btn-main { background:#135bec; color:#fff; }
+  #overlay {
+    position:absolute; inset:0; background:rgba(0,0,0,.9);
+    display:none; flex-direction:column; align-items:center; justify-content:center;
+    padding:28px; text-align:center; gap:12px;
+  }
+  #overlay.show { display:flex; }
+  #overlay .big { font-size:46px; line-height:1; }
+  #overlay h2 { font-size:19px; font-weight:700; }
+  #overlay p { font-size:14px; color:#b4b4b4; line-height:1.55; }
+  #code {
+    font-size:22px; font-weight:700; letter-spacing:1px; color:#16c46a;
+    background:#111; border:1px solid #2a2a2a; border-radius:12px;
+    padding:12px 20px; user-select:all;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Quét mã QR nhân viên rập</h1>
+  <p id="ctx">Đưa mã QR vào giữa khung</p>
+</header>
+
+<div id="stage">
+  <video id="video" playsinline muted autoplay></video>
+  <div id="frame"></div>
+  <p id="hint">Đang mở camera...</p>
+
+  <div id="overlay">
+    <div class="big" id="ovIcon">📷</div>
+    <h2 id="ovTitle"></h2>
+    <p id="ovText"></p>
+    <div id="code" style="display:none"></div>
+    <button class="btn-main" id="ovBtn" style="display:none;flex:0 0 auto;padding:14px 26px;">Thử lại</button>
+  </div>
+</div>
+
+<footer>
+  <button class="btn-ghost" id="btnTorch" style="display:none">💡 Bật đèn</button>
+  <button class="btn-ghost" id="btnClose">Đóng</button>
+</footer>
+
+<script>
+(function () {
+  'use strict';
+
+  var params      = new URLSearchParams(location.search);
+  var parentOrigin = params.get('origin') || '';
+  var label        = params.get('label') || '';
+  if (label) document.getElementById('ctx').textContent = label;
+
+  var video   = document.getElementById('video');
+  var frame   = document.getElementById('frame');
+  var hint    = document.getElementById('hint');
+  var overlay = document.getElementById('overlay');
+  var btnTorch = document.getElementById('btnTorch');
+  var btnClose = document.getElementById('btnClose');
+
+  var stream = null, track = null, torchOn = false;
+  var running = false, frameNo = 0, done = false;
+
+  // ---------- decoders ----------
+  var nativeDetector = null;
+  try {
+    if (window.BarcodeDetector) nativeDetector = new window.BarcodeDetector({ formats: ['qr_code'] });
+  } catch (e) { nativeDetector = null; }
+
+  var zxing = null;
+  try {
+    if (window.ZXing && window.ZXing.BrowserQRCodeReader) {
+      var hints = new Map();
+      hints.set(window.ZXing.DecodeHintType.TRY_HARDER, true);
+      zxing = new window.ZXing.BrowserQRCodeReader(hints);
+    }
+  } catch (e) { zxing = null; }
+
+  function adaptiveBinarize(gray, w, h, radius, bias) {
+    var W1 = w + 1, integral = new Float64Array(W1 * (h + 1)), x, y;
+    for (y = 0; y < h; y++) {
+      var run = 0;
+      for (x = 0; x < w; x++) {
+        run += gray[y * w + x];
+        integral[(y + 1) * W1 + (x + 1)] = integral[y * W1 + (x + 1)] + run;
+      }
+    }
+    var out = new Uint8ClampedArray(w * h * 4);
+    for (y = 0; y < h; y++) {
+      var y0 = Math.max(0, y - radius), y1 = Math.min(h - 1, y + radius);
+      for (x = 0; x < w; x++) {
+        var x0 = Math.max(0, x - radius), x1 = Math.min(w - 1, x + radius);
+        var area = (x1 - x0 + 1) * (y1 - y0 + 1);
+        var sum = integral[(y1 + 1) * W1 + (x1 + 1)] - integral[y0 * W1 + (x1 + 1)]
+                - integral[(y1 + 1) * W1 + x0] + integral[y0 * W1 + x0];
+        var v = (gray[y * w + x] * area > sum - bias * area) ? 255 : 0;
+        var p = (y * w + x) * 4;
+        out[p] = out[p + 1] = out[p + 2] = v; out[p + 3] = 255;
+      }
+    }
+    return out;
+  }
+
+  var work = document.createElement('canvas');
+  var wctx = work.getContext('2d', { willReadFrequently: true });
+
+  async function decodeFrame() {
+    var vw = video.videoWidth, vh = video.videoHeight;
+    if (!vw || !vh) return null;
+
+    // Crop the square guide region, a touch wider to be forgiving
+    var side = Math.min(vw, vh) * 0.9;
+    var sx = (vw - side) / 2, sy = (vh - side) / 2;
+    var target = 800;
+    work.width = target; work.height = target;
+    wctx.drawImage(video, sx, sy, side, side, 0, 0, target, target);
+
+    if (nativeDetector) {
+      try {
+        var codes = await nativeDetector.detect(work);
+        if (codes && codes.length && codes[0].rawValue) return codes[0].rawValue;
+      } catch (e) {}
+    }
+
+    var img = wctx.getImageData(0, 0, target, target);
+    try {
+      var c = jsQR(img.data, target, target, { inversionAttempts: 'attemptBoth' });
+      if (c && c.data) return c.data;
+    } catch (e) {}
+
+    if (zxing && frameNo % 2 === 0) {
+      try {
+        var r = zxing.decodeFromCanvas(work);
+        if (r && r.getText) return r.getText();
+      } catch (e) {}
+    }
+
+    // Adaptive threshold pass — survives glare on glossy stickers
+    if (frameNo % 3 === 0) {
+      var n = target * target, gray = new Uint8ClampedArray(n);
+      for (var i = 0, p = 0; p < n; i += 4, p++) {
+        gray[p] = (img.data[i] * 0.299 + img.data[i + 1] * 0.587 + img.data[i + 2] * 0.114) | 0;
+      }
+      try {
+        var bin = adaptiveBinarize(gray, target, target, Math.max(8, target >> 4), 6);
+        var c2 = jsQR(bin, target, target, { inversionAttempts: 'attemptBoth' });
+        if (c2 && c2.data) return c2.data;
+      } catch (e) {}
+    }
+    return null;
+  }
+
+  // ---------- loop ----------
+  async function tick() {
+    if (!running || done) return;
+    frameNo++;
+    var hit = null;
+    try { hit = await decodeFrame(); } catch (e) {}
+    if (hit) { onHit(hit); return; }
+    setTimeout(tick, 55);
+  }
+
+  function onHit(value) {
+    if (done) return;
+    done = true;
+    frame.classList.add('hit');
+    hint.textContent = 'Đã đọc được mã';
+    try { if (navigator.vibrate) navigator.vibrate(120); } catch (e) {}
+    sendBack(value);
+  }
+
+  // ---------- send result back to the Apps Script app ----------
+  var ackGot = false;
+  window.addEventListener('message', function (ev) {
+    if (ev.data && ev.data.type === 'scavi-qr-ack') { ackGot = true; closeSoon(); }
+  });
+
+  function sendBack(value) {
+    var payload = { type: 'scavi-qr', value: value };
+    var posted = false;
+    try {
+      if (window.opener) {
+        if (parentOrigin) { try { window.opener.postMessage(payload, parentOrigin); posted = true; } catch (e) {} }
+        try { window.opener.postMessage(payload, '*'); posted = true; } catch (e) {}
+      }
+    } catch (e) {}
+
+    if (!posted) { showManual(value); return; }
+
+    showOverlay('✅', 'Đã quét xong', 'Đang quay lại ứng dụng...', null);
+    setTimeout(function () { if (!ackGot) showManual(value); }, 1800);
+  }
+
+  function closeSoon() {
+    showOverlay('✅', 'Đã quét xong', 'Đang đóng cửa sổ...', null);
+    stopCamera();
+    setTimeout(function () { try { window.close(); } catch (e) {} }, 700);
+  }
+
+  function showManual(value) {
+    stopCamera();
+    var el = document.getElementById('code');
+    el.textContent = value;
+    el.style.display = 'block';
+    showOverlay('⚠️', 'Không gửi được về ứng dụng',
+      'Hãy quay lại tab ứng dụng và báo mã này cho người phụ trách, hoặc thử lại.', 'Quét lại');
+  }
+
+  function showOverlay(icon, title, text, btnLabel) {
+    document.getElementById('ovIcon').textContent = icon;
+    document.getElementById('ovTitle').textContent = title;
+    document.getElementById('ovText').textContent = text;
+    var b = document.getElementById('ovBtn');
+    if (btnLabel) { b.textContent = btnLabel; b.style.display = 'block'; }
+    else b.style.display = 'none';
+    overlay.classList.add('show');
+  }
+
+  document.getElementById('ovBtn').addEventListener('click', function () {
+    overlay.classList.remove('show');
+    document.getElementById('code').style.display = 'none';
+    frame.classList.remove('hit');
+    done = false; ackGot = false;
+    start();
+  });
+
+  // ---------- camera ----------
+  async function start() {
+    hint.textContent = 'Đang mở camera...';
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+        audio: false
+      });
+    } catch (err) {
+      showOverlay('🚫', 'Không mở được camera',
+        'Hãy cho phép quyền camera cho trang này trong trình duyệt, rồi thử lại. (' + (err && err.name ? err.name : 'lỗi') + ')',
+        'Thử lại');
+      return;
+    }
+
+    video.srcObject = stream;
+    try { await video.play(); } catch (e) {}
+    track = stream.getVideoTracks()[0];
+
+    try {
+      var caps = track.getCapabilities ? track.getCapabilities() : {};
+      if (caps && caps.torch) btnTorch.style.display = 'flex';
+    } catch (e) {}
+
+    // Continuous autofocus where supported — helps a lot up close
+    try { await track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }); } catch (e) {}
+
+    running = true;
+    hint.textContent = 'Đưa mã QR vào giữa khung và giữ yên';
+    tick();
+  }
+
+  function stopCamera() {
+    running = false;
+    if (stream) { stream.getTracks().forEach(function (t) { try { t.stop(); } catch (e) {} }); stream = null; }
+    track = null;
+  }
+
+  btnTorch.addEventListener('click', async function () {
+    if (!track) return;
+    try {
+      torchOn = !torchOn;
+      await track.applyConstraints({ advanced: [{ torch: torchOn }] });
+      btnTorch.className = torchOn ? 'btn-on' : 'btn-ghost';
+      btnTorch.textContent = torchOn ? '💡 Tắt đèn' : '💡 Bật đèn';
+    } catch (e) {}
+  });
+
+  btnClose.addEventListener('click', function () {
+    stopCamera();
+    try { window.close(); } catch (e) {}
+  });
+
+  window.addEventListener('pagehide', stopCamera);
+
+  start();
+})();
+</script>
+</body>
+</html>
